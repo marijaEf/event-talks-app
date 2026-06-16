@@ -7,6 +7,7 @@ let searchKeyword = '';
 const notesFeed = document.getElementById('notes-feed');
 const refreshBtn = document.getElementById('refresh-btn');
 const refreshIcon = refreshBtn.querySelector('.spinner-icon');
+const exportCsvBtn = document.getElementById('export-csv-btn');
 const lastUpdatedText = document.getElementById('last-updated-text');
 const searchInput = document.getElementById('search-input');
 const clearSearchBtn = document.getElementById('clear-search-btn');
@@ -39,6 +40,9 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
   // Refresh button
   refreshBtn.addEventListener('click', () => fetchReleaseNotes(true));
+  
+  // Export CSV button
+  exportCsvBtn.addEventListener('click', exportToCsv);
   
   // Search input
   searchInput.addEventListener('input', (e) => {
@@ -255,6 +259,13 @@ function renderNotes() {
           </svg>
           <span>Draft Tweet</span>
         </button>
+        <button class="btn-card-action" data-action="copy-text" data-id="${note.id}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <span>Copy Note Text</span>
+        </button>
         <button class="btn-card-action" data-action="copy-link" data-link="${note.link}">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
@@ -267,6 +278,7 @@ function renderNotes() {
     
     // Register actions
     card.querySelector('[data-action="tweet"]').addEventListener('click', () => openTweetModal(note));
+    card.querySelector('[data-action="copy-text"]').addEventListener('click', (e) => copyTextToClipboard(e, note));
     card.querySelector('[data-action="copy-link"]').addEventListener('click', (e) => copyLinkToClipboard(e, note.link));
     
     notesFeed.appendChild(card);
@@ -354,4 +366,90 @@ function stripHtml(html) {
     a.replaceWith(a.textContent);
   });
   return doc.body.textContent || "";
+}
+
+// Utility to copy full note content to clipboard
+async function copyTextToClipboard(event, note) {
+  const btn = event.currentTarget;
+  const originalHtml = btn.innerHTML;
+  
+  const plainContent = stripHtml(note.content).trim();
+  const fullText = `BigQuery Release Note - ${note.date} [${note.type}]\n\n${plainContent}\n\nLink: ${note.link}`;
+  
+  try {
+    await navigator.clipboard.writeText(fullText);
+    btn.innerHTML = `
+      <svg class="icon" style="color: var(--color-feature);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      <span style="color: var(--color-feature);">Copied!</span>
+    `;
+    setTimeout(() => {
+      btn.innerHTML = originalHtml;
+    }, 2000);
+  } catch (err) {
+    console.error('Failed to copy text: ', err);
+    alert('Failed to copy note content to clipboard.');
+  }
+}
+
+// Export visible notes to CSV file
+function exportToCsv() {
+  if (releaseNotes.length === 0) {
+    alert("No data available to export!");
+    return;
+  }
+  
+  // Filter based on active filter and search keyword
+  const filtered = releaseNotes.filter(note => {
+    const matchesFilter = activeFilter === 'all' || note.type === activeFilter;
+    const plainContent = stripHtml(note.content).toLowerCase();
+    const plainDate = note.date.toLowerCase();
+    const plainType = note.type.toLowerCase();
+    
+    const matchesSearch = !searchKeyword || 
+                          plainContent.includes(searchKeyword) ||
+                          plainDate.includes(searchKeyword) ||
+                          plainType.includes(searchKeyword);
+                          
+    return matchesFilter && matchesSearch;
+  });
+
+  if (filtered.length === 0) {
+    alert("No matching notes to export!");
+    return;
+  }
+
+  // Create CSV header
+  const headers = ["Date", "Type", "Content", "Link"];
+  
+  // Map rows
+  const rows = filtered.map(note => {
+    const cleanContent = stripHtml(note.content)
+      .replace(/"/g, '""') // Escape double quotes
+      .replace(/\r?\n|\r/g, ' '); // Strip newlines
+    
+    return [
+      `"${note.date}"`,
+      `"${note.type}"`,
+      `"${cleanContent}"`,
+      `"${note.link}"`
+    ].join(',');
+  });
+  
+  const csvContent = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  
+  const filterSuffix = activeFilter !== 'all' ? `_${activeFilter}` : '';
+  const dateStr = new Date().toISOString().split('T')[0];
+  link.setAttribute("download", `bq_release_notes${filterSuffix}_${dateStr}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
